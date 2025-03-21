@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Tue Mar 11 15:25:02 2025
+Created on Fri Mar 21 17:46:48 2025
 
 @author: eungi
 """
@@ -48,17 +48,17 @@ datelist = [
 ]
 yrmthlist = [
     "202404",
-    "202403",
-    "202402",
-    "202401",
-    "202312",
-    "202311",
-    "202310",
-    "202309",
-    "202308",
-    "202307",
-    "202306",
-    "202305",
+    # "202403",
+    # "202402",
+    # "202401",
+    # "202312",
+    # "202311",
+    # "202310",
+    # "202309",
+    # "202308",
+    # "202307",
+    # "202306",
+    # "202305",
 ]
 # yrmthlist = ["202404"]
 
@@ -92,12 +92,12 @@ def handle_yrmthd(yrmth):
 
 checklist = []
 for yrmth in yrmthlist:
-    for i in range(handle_yrmthd(yrmth)):
+    for i in range(handle_yrmthd(yrmth) - 14, handle_yrmthd(yrmth)):
         x = yrmth + datelist[i]
         checklist.append(x)
 
 print(checklist)
-
+len(checklist)
 
 ymd = "20230501"
 df = pd.read_parquet(f"/Users/eungi/Desktop/eungi_dt/mim/livpop/src/data/local-{ymd[:6]}/processed/LOCAL_PEOPLE_{ymd}.parquet")
@@ -122,13 +122,13 @@ missing_hours_df = pd.concat(missing_hours_list).reset_index(drop=True)
 unique_ids_mss = missing_hours_df["census_id"].unique()
 
 target_ids = np.setdiff1d(unique_ids, unique_ids_mss)
-desired_count = round(len(target_ids) * 0.002)
+desired_count = round(len(target_ids) * 0.05)
 np.random.seed(42)
 selected_ids = np.random.choice(list(target_ids), size=desired_count, replace=False)
 
 ids = ["census_id"]  # ["adm_id", "census_id"]
 labels = ["xpop_total"]
-earliest_time_str = "2023-05-01 00:00:00"
+earliest_time_str = "2023-04-17 00:00:00"
 earliest_time = pd.to_datetime(earliest_time_str)
 df_list = []
 for ymd in checklist:
@@ -194,7 +194,7 @@ training = TimeSeriesDataSet(
     add_relative_time_idx=True,  # Adds a relative time index (helps the model generalize across different sequences).
     add_target_scales=True,  # Adds scaling parameters for xpop, allowing the model to denormalize outputs.
     add_encoder_length=True,  # Adds the encoder sequence length as a feature, so the model knows how much past data is available.
-    allow_missing_timesteps=True,  # check later
+    # allow_missing_timesteps=True,  # check later
 )
 
 ######################### WHY MISSING TIMESTEPS? PROCESSED
@@ -208,17 +208,27 @@ training = TimeSeriesDataSet(
 # - Instead, it will treat the xpop column as unknown future values to be predicted.
 validation = TimeSeriesDataSet.from_dataset(training, time_df, predict=True, stop_randomization=True)
 
+# check for num_workers----------------------------------------------------------------------
+import os
+import multiprocessing
+import torch
+
+print("CPU cores:", os.cpu_count())
+# 11
+print("CPU cores:", multiprocessing.cpu_count())
+# 11
+print(torch.backends.mps.is_available())
+# True
 
 # create dataloaders for  our model ----------------------------------------------------------------------
 batch_size = 64
 # if you have a strong GPU, feel free to increase the number of workers
 # DataLoaders handle batching, shuffling, and loading data into memory during training.
-train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=10, persistent_workers=True)
-val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size * 10, num_workers=10, persistent_workers=True)
+train_dataloader = training.to_dataloader(train=True, batch_size=batch_size, num_workers=11, persistent_workers=True)
+val_dataloader = validation.to_dataloader(train=False, batch_size=batch_size * 10, num_workers=11, persistent_workers=True)
 
 
 # Baseline
-import torch
 from pytorch_forecasting.models import Baseline
 
 
@@ -239,6 +249,12 @@ baseline_model = MyBaseline()
 baseline_predictions = baseline_model.predict(val_dataloader).to(device)
 mae = (actuals - baseline_predictions).abs().mean().item()
 print("Baseline MAE:", mae)
+# GPU available: True (mps), used: True
+# TPU available: False, using: 0 TPU cores
+# HPU available: False, using: 0 HPUs
+# Baseline MAE: 241.35018920898438
+
+# v1_result ----------------------------------------------------------------------
 # /Users/eungi/Desktop/eungi_dt/mim/livpop/env2/lib/python3.12/site-packages/lightning/pytorch/utilities/parsing.py:209: Attribute 'loss' is an instance of `nn.Module` and is already saved during checkpointing. It is recommended to ignore them using `self.save_hyperparameters(ignore=['loss'])`.
 # /Users/eungi/Desktop/eungi_dt/mim/livpop/env2/lib/python3.12/site-packages/lightning/pytorch/utilities/parsing.py:209: Attribute 'logging_metrics' is an instance of `nn.Module` and is already saved during checkpointing. It is recommended to ignore them using `self.save_hyperparameters(ignore=['logging_metrics'])`.
 # GPU available: True (mps), used: True
@@ -260,25 +276,27 @@ from lightning.pytorch import Trainer
 
 early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=1e-4, patience=5, verbose=True, mode="min")
 lr_logger = LearningRateMonitor()
-logger = TensorBoardLogger("lightning_logs")
+logger = TensorBoardLogger("lightning_logs_v2")
 
 trainer = Trainer(
-    max_epochs=12,
+    max_epochs=1,
     accelerator="auto",
     devices="auto",
     enable_model_summary=True,
     gradient_clip_val=0.1,
     callbacks=[lr_logger, early_stop_callback],
     logger=logger,
+    limit_train_batches=0.5,  # Use 10% of training batches
+    limit_val_batches=0.5,  # Use 10% of validation batches
 )
 
 tft = TemporalFusionTransformer.from_dataset(
     training,
-    learning_rate=0.001,
-    hidden_size=160,
+    learning_rate=0.1,
+    hidden_size=6,
     attention_head_size=4,
     dropout=0.1,
-    hidden_continuous_size=160,
+    hidden_continuous_size=6,
     output_size=7,  # there are 7 quantiles by default: [0.02, 0.1, 0.25, 0.5, 0.75, 0.9, 0.98]
     loss=QuantileLoss(),
     log_interval=10,
@@ -287,9 +305,9 @@ tft = TemporalFusionTransformer.from_dataset(
 )
 
 # train ----------------------------------------------------------------------
-# trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
-# best_model_path = trainer.checkpoint_callback.best_model_path
-# print(best_model_path)
+trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
+best_model_path = trainer.checkpoint_callback.best_model_path
+print(best_model_path)
 # best_tft = TemporalFusionTransformer.load_from_checkpoint(best_model_path)
 # print(best_tft)
 
@@ -410,12 +428,19 @@ meancheck
 from pytorch_forecasting.data.encoders import NaNLabelEncoder
 
 test_ts_set = TimeSeriesDataSet.from_dataset(
-    training, time_df2, predict=True, stop_randomization=True, categorical_encoders={"census_id": NaNLabelEncoder(add_nan=True)}
+    training,
+    time_df2,
+    predict=True,
+    stop_randomization=True,
+    categorical_encoders={"census_id": NaNLabelEncoder(add_nan=True)},
 )
 # test_ts_set = TimeSeriesDataSet.from_dataset(training, time_df2, predict=True, stop_randomization=True)
 
 test_dataloader = test_ts_set.to_dataloader(
-    train=False, batch_size=batch_size * 10, num_workers=10, persistent_workers=True  # Adjust batch size as needed
+    train=False,
+    batch_size=batch_size * 10,
+    num_workers=10,
+    persistent_workers=True,  # Adjust batch size as needed
 )
 
 new_predictions = best_tft.predict(test_dataloader, mode="raw", return_x=True)
