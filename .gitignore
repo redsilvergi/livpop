@@ -1,0 +1,62 @@
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Icon?
+Desktop.ini
+
+# Compiled source files
+*.com
+*.class
+*.dll
+*.exe
+*.o
+*.so
+
+# Log files and databases
+*.log
+*.sql
+*.sqlite
+
+# Dependency directories
+node_modules/
+bower_components/
+
+# Build directories
+dist/
+build/
+
+# Python-specific
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# IDEs and editors
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+
+# Environment variables and secrets
+.env
+
+#add custom dir
+materials
+env2
+env3_automation
+sql
+data
+optuna_test
+lightning_logs
+lightning_logs2
+
+#add custom files
+*.csv
+*.pdf
+*.zip
